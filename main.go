@@ -132,37 +132,115 @@ type Student struct {
 	StudyHours int
 }
 
-func study(student Student, library chan bool, wg *sync.WaitGroup, waitChan chan float64, peak *int, mu *sync.Mutex) {
+func study(id int, studyHours int, library chan bool, stats *LibraryStats, start time.Time, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	arrival := time.Now()
 
 	if len(library) == cap(library) {
-		fmt.Printf("Student %d waiting... (library full)\n", student.ID)
+		fmt.Printf("Student %d waiting... (library full)\n", id)
 	}
 
 	// Enter library
 	library <- true
 
 	waitTime := time.Since(arrival).Seconds()
-	waitChan <- waitTime
+	stats.AddWaitTime(time.Duration(waitTime))
 
-	mu.Lock()
-	if len(library) > *peak {
-		*peak = len(library)
+	hour := int(time.Since(start).Seconds())
+	if hour >= len(stats.HourlyActivity) {
+		hour = len(stats.HourlyActivity)
 	}
-	mu.Unlock()
+
+	stats.RecordEntry(hour)
+
+
 
 	fmt.Printf("Student %d entered library, will study for %d hours\n",
-		student.ID, student.StudyHours)
+		id, studyHours)
 
-	time.Sleep(time.Duration(student.StudyHours) * time.Second)
-
-	fmt.Printf("Student %d left library after %d hours\n",
-		student.ID, student.StudyHours)
+	time.Sleep(time.Duration(studyHours) * time.Second)
 
 	<-library
+
+	stats.RecordExit()
+
+	fmt.Printf("Student %d left library after %d hours\n",
+		id, studyHours)
 }
+
+// Task 5.2
+type LibraryStats struct {
+	TotalStudents int
+	TotalWaitTime time.Duration
+	PeakOccupancy int
+	CurrentOccupancy int
+	HourlyActivity []int // tracks how many students enter each hour
+	mu sync.Mutex
+}
+
+func (stats *LibraryStats) RecordEntry(hour int) {
+ 	// TODO: Update statistics when student enters
+	stats.mu.Lock()
+	defer stats.mu.Unlock()
+
+	stats.CurrentOccupancy++
+	stats.HourlyActivity[hour]++
+
+	if stats.CurrentOccupancy > stats.PeakOccupancy {
+		stats.PeakOccupancy = stats.CurrentOccupancy
+	}
+}
+
+
+func (stats *LibraryStats) RecordExit() {
+ 	// TODO: Update statistics when student exits
+	stats.mu.Lock()
+	defer stats.mu.Unlock()
+
+	stats.TotalStudents++
+	stats.CurrentOccupancy--
+
+}
+
+func (stats *LibraryStats) AddWaitTime(wait time.Duration) {
+	// TODO: Add Waiting Time when student enters
+	stats.mu.Lock()
+	defer stats.mu.Unlock()
+
+	stats.TotalWaitTime += wait
+}
+
+
+func (stats *LibraryStats) PrintReport(totalTime time.Duration) {
+ 	// TODO: Print detailed statistics
+	avgWait := float64(stats.TotalWaitTime) / float64(time.Duration(stats.TotalStudents))
+
+	quietHour := 0
+	minStudents := stats.HourlyActivity[0]
+
+	totalStudentHours := 0
+
+	for h, students := range stats.HourlyActivity {
+		totalStudentHours += students
+
+		if students < minStudents {
+			minStudents = students
+			quietHour = h
+		}
+	}
+
+	avgStudy := float64(totalStudentHours) / float64(stats.TotalStudents)
+	fmt.Println("\n=== Simulation Complete ===")
+	fmt.Printf("Total students served: %d\n", stats.TotalStudents)
+	fmt.Printf("Library was open for: %.0f hours\n", totalTime.Seconds())
+	fmt.Printf("Average wait time: %.2f hours\n", avgWait)
+	fmt.Printf("Peak occupancy: %d students\n", stats.PeakOccupancy)
+	fmt.Printf("Quietest hour: Hour %d (%d students)\n", quietHour, minStudents)
+	fmt.Printf("Total student-hours: %d hours\n", totalStudentHours)
+	fmt.Printf("Average study duration: %.2f hours per student\n", avgStudy)
+}
+
 
 func main() {
 
@@ -171,46 +249,32 @@ func main() {
 	fmt.Println("Total students today: 100")
 	fmt.Println("Simulation: 1 second = 1 hour")
 
-	start := time.Now()
-
 	library := make(chan bool, 30)
-	waitChan := make(chan float64, 100)
+	stats := LibraryStats {
+		HourlyActivity: make([]int, 24),
+	}
 
 	var wg sync.WaitGroup
-	var mu sync.Mutex
 
-	peakOccupancy := 0
+	start := time.Now()
 
-	for i := 1; i <= 100; i++ {
+	students := make([]Student, 100)
+	for i := range 100 {
 
-		wg.Add(1)
-
-		student := Student{
-			ID:         i,
+		students[i] = Student{
+			ID:         i + 1,
 			StudyHours: rand.Intn(4) + 1,
 		}
+	}
 
-		go study(student, library, &wg, waitChan, &peakOccupancy, &mu)
-
-		time.Sleep(50 * time.Millisecond)
+	for _, s := range students {
+		wg.Add(1)
+		go study(s.ID, s.StudyHours, library, &stats, start, &wg)
 	}
 
 	wg.Wait()
-	close(waitChan)
+	totalTime := time.Since(start)
+	
+	stats.PrintReport(totalTime)
 
-	totalWait := 0.0
-	count := 0
-
-	for w := range waitChan {
-		totalWait += w
-		count++
-	}
-
-	averageWait := totalWait / float64(count)
-
-	fmt.Println("=== Simulation Complete ===")
-	fmt.Println("Total students served: 100")
-	fmt.Printf("Library was open for: %d hours\n", int(time.Since(start).Seconds()))
-	fmt.Printf("Average wait time: %.2f hours\n", averageWait)
-	fmt.Printf("Peak occupancy: %d students\n", peakOccupancy)
 }
