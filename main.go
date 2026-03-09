@@ -161,6 +161,8 @@ func study(id int, studyHours int, library chan bool, stats *LibraryStats, start
 
 	time.Sleep(time.Duration(studyHours) * time.Second)
 
+	stats.RecordStudyTime(studyHours)
+
 	<-library
 
 	stats.RecordExit()
@@ -173,6 +175,7 @@ func study(id int, studyHours int, library chan bool, stats *LibraryStats, start
 type LibraryStats struct {
 	TotalStudents int
 	TotalWaitTime time.Duration
+	TotalStudyHours int
 	PeakOccupancy int
 	CurrentOccupancy int
 	HourlyActivity []int // tracks how many students enter each hour
@@ -211,10 +214,16 @@ func (stats *LibraryStats) AddWaitTime(wait time.Duration) {
 	stats.TotalWaitTime += wait
 }
 
+func (stats *LibraryStats) RecordStudyTime(hours int) {
+	stats.mu.Lock()
+	defer stats.mu.Unlock()
+	stats.TotalStudyHours += hours
+}
+
 
 func (stats *LibraryStats) PrintReport(totalTime time.Duration) {
  	// TODO: Print detailed statistics
-	avgWait := float64(stats.TotalWaitTime) / float64(time.Duration(stats.TotalStudents))
+	avgWait := float64(stats.TotalWaitTime) / float64(stats.TotalStudents)
 
 	quietHour := 0
 	minStudents := stats.HourlyActivity[0]
@@ -224,20 +233,20 @@ func (stats *LibraryStats) PrintReport(totalTime time.Duration) {
 	for h, students := range stats.HourlyActivity {
 		totalStudentHours += students
 
-		if students < minStudents {
+		if students < minStudents && students != 0 {
 			minStudents = students
 			quietHour = h
 		}
 	}
 
-	avgStudy := float64(totalStudentHours) / float64(stats.TotalStudents)
+	avgStudy := float64(stats.TotalStudyHours) / float64(stats.TotalStudents)
 	fmt.Println("\n=== Simulation Complete ===")
 	fmt.Printf("Total students served: %d\n", stats.TotalStudents)
 	fmt.Printf("Library was open for: %.0f hours\n", totalTime.Seconds())
 	fmt.Printf("Average wait time: %.2f hours\n", avgWait)
 	fmt.Printf("Peak occupancy: %d students\n", stats.PeakOccupancy)
 	fmt.Printf("Quietest hour: Hour %d (%d students)\n", quietHour, minStudents)
-	fmt.Printf("Total student-hours: %d hours\n", totalStudentHours)
+	fmt.Printf("Total student-hours: %d hours\n", stats.TotalStudyHours)
 	fmt.Printf("Average study duration: %.2f hours per student\n", avgStudy)
 }
 
